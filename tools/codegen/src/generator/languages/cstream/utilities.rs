@@ -72,7 +72,7 @@ pub(super) trait IdentPrefix: HasName {
         &self,
         writer: &mut W,
     ) -> io::Result<()> {
-        self.function_signature(writer, "_parse", format!("(struct {name}_state *s, struct mol_chunk *chunk, struct {name}_callbacks *cb, mol_num_t size)", name=self.name()).as_str(), "mol_rv", " {");
+        self.function_signature(writer, "_parse", format!("(void* stack_end, struct {name}_state *s, struct mol_chunk *chunk, const struct {name}_callbacks *cb, mol_num_t size)", name=self.name()).as_str(), "mol_rv", " {");
         w!(writer, "    mol_num_t start_idx = chunk->consumed;");
         Ok(())
     }
@@ -81,8 +81,8 @@ pub(super) trait IdentPrefix: HasName {
         &self,
         writer: &mut W,
     ) -> io::Result<()> {
-        self.function_signature(writer, "_init_state", format!("(struct {name}_state *s, struct mol_chunk *chunk, struct {name}_callbacks *cb)", name=self.name()).as_str(), "void", " {");
-        w!(writer, "    if(cb && cb->start) cb->start();");
+        self.function_signature(writer, "_init_state", format!("(void* stack_end, struct {name}_state *s, const struct {name}_callbacks *cb)", name=self.name()).as_str(), "void", " {");
+        w!(writer, "    if(cb && cb->start) MOL_PIC(cb->start)();");
         Ok(())
     }
 
@@ -90,8 +90,8 @@ pub(super) trait IdentPrefix: HasName {
         &self,
         writer: &mut W,
     ) -> io::Result<()> {
-		w!(writer, "    if(cb && cb->chunk) cb->chunk(chunk->ptr + start_idx, chunk->consumed - start_idx);");
-        w!(writer, "    if(cb && cb->end) cb->end();");
+		w!(writer, "    if(cb && cb->chunk) MOL_PIC(cb->chunk)(chunk->ptr + start_idx, chunk->consumed - start_idx);");
+        w!(writer, "    if(cb && cb->end) MOL_PIC(cb->end)();");
         w!(writer, "    return COMPLETE;");
         Ok(())
     }

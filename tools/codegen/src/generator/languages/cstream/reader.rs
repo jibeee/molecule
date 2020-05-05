@@ -8,8 +8,9 @@ pub(super) trait GenReader: IdentPrefix {
         {
             w!(writer, "struct {name}_state;", name=self.name());
             w!(writer, "struct {name}_callbacks;", name=self.name());
-            self.function_signature(writer, "_init_state", format!("(struct {name}_state *s, struct mol_chunk *chunk, struct {name}_callbacks *cb)", name=self.name()).as_str(), "void", ";");
-            self.function_signature(writer, "_parse", format!("(struct {name}_state *s, struct mol_chunk *chunk, struct {name}_callbacks *cb, mol_num_t size)", name=self.name()).as_str(), "mol_rv", ";");
+            w!(writer, "typedef const struct {name}_callbacks {name}_cb;", name=self.name());
+            self.function_signature(writer, "_init_state", format!("(void* stack_end, struct {name}_state *s, const struct {name}_callbacks *cb)", name=self.name()).as_str(), "void", ";");
+            self.function_signature(writer, "_parse", format!("(void* stack_end, struct {name}_state *s, struct mol_chunk *chunk, const struct {name}_callbacks *cb, mol_num_t size)", name=self.name()).as_str(), "mol_rv", ";");
             w!(writer, "");
         }
         Ok(())
@@ -37,7 +38,7 @@ impl GenReader for ast::Option_ {
             w!(o, "    void (*end)();");
             w!(o, "    void (*chunk)(uint8_t*, mol_num_t);");
             let f=self.item();
-            w!(o, "    struct {}_callbacks *item;", f.typ().get_name());
+            w!(o, "    const struct {}_callbacks *item;", f.typ().get_name());
             w!(o, "}};");
             w!(o, "");
         }
@@ -47,7 +48,6 @@ impl GenReader for ast::Option_ {
             w!(o, "}}");
             w!(o, "");
             self.start_parser_function(o);
-            w!(o, "    mol_rv rv;");
             w!(o, "    // Option");
             w!(o, "    if(size==0) {{");
             self.success(o);
@@ -77,10 +77,10 @@ impl GenReader for ast::Array {
         if self.item().typ().is_byte() {
             w!(o, "struct {}_state {{ struct bytes_state state; }};", self.name());
             w!(o, "struct {}_callbacks {{ struct bytes_callbacks cb; }};", self.name());
-            let i_macro_sig_tail = "_init_state(g, c, cbs)";
-            let i_macro_content = "mol_bytes_init_state(&(g->state), c, &((cbs)->cb))";
+            let i_macro_sig_tail = "_init_state(st, g, cbs)";
+            let i_macro_content = "mol_bytes_init_state(&(g->state), &((cbs)->cb))";
             self.define_reader_macro(o, &i_macro_sig_tail, &i_macro_content)?;
-            let macro_sig_tail = "_parse(g, c, cbs, sz)";
+            let macro_sig_tail = "_parse(st, g, c, cbs, sz)";
             let macro_content = format!(
                 "mol_parse_bytes(&(g->state), c, &((cbs)->cb), {})", self.item_count());
             self.define_reader_macro(o, &macro_sig_tail, &macro_content)?;
@@ -90,7 +90,7 @@ impl GenReader for ast::Array {
             w!(o, "    void (*start)();");
             w!(o, "    void (*chunk)(uint8_t*, mol_num_t);");
             w!(o, "    void (*end)();");
-            w!(o, "    struct item *{};", self.item().typ().get_name());
+            w!(o, "    const struct item *{};", self.item().typ().get_name());
             w!(o, "}};");
             w!(o, "");
             self.start_init_function(o);
@@ -98,13 +98,11 @@ impl GenReader for ast::Array {
             w!(o, "        MOL_INIT_SUBPARSER(item, {field_type});", field_type=self.item().typ().get_name());
             w!(o, "    }} ");
             self.start_parser_function(o);
-            w!(o, "    if(size != {} && size != -1) return REJECT;", self.total_size());
+            w!(o, "    if(size != {} && size != MOL_NUM_MAX) return REJECT;", self.item_count()*self.item_size());
             w!(o, "    while(state->state_num < {length}) {{ ", length=self.item_count());
             w!(o, "        MOL_CALL_SUBPARSER(item, {}, {})", self.item().typ().get_name(), self.item_size());
-            w!(o, "        if(rv.complete) {{ ");
-            w!(o, "            MOL_INIT_SUBPARSER(item, {field_type});", field_type=self.item().typ().get_name());
-            w!(o, "            state->state_num++; ");
-            w!(o, "        }} ");
+            w!(o, "        MOL_INIT_SUBPARSER(item, {field_type});", field_type=self.item().typ().get_name());
+            w!(o, "        state->state_num++; ");
             w!(o, "    }}");
             self.success(o);
             w!(o, "    return INCOMPLETE;");
@@ -123,7 +121,7 @@ impl GenReader for ast::Struct {
             w!(o, "    void (*chunk)(uint8_t*, mol_num_t);");
             w!(o, "    void (*end)();");
             for (f, field_size) in self.fields().iter().zip(self.field_sizes().iter()) {
-                w!(o, "    struct {}_callbacks *{};", f.typ().get_name(), f.name());
+                w!(o, "    const struct {}_callbacks *{};", f.typ().get_name(), f.name());
             }
             w!(o, "}};");
             w!(o, "");
@@ -139,6 +137,7 @@ impl GenReader for ast::Struct {
             w!(o, "");
             self.start_parser_function(o);
             w!(o, "    // Struct");
+            w!(o, "    if(size != {} && size != MOL_NUM_MAX) return REJECT;", self.total_size());
             w!(o, "    switch(s->state_num) {{");
             for (i, ((f, nf), fsz)) in self.fields().iter().zip(self.fields().iter().skip(1)).zip(self.field_sizes().iter()).enumerate() {
                 let fty = f.typ().get_name();
@@ -175,8 +174,10 @@ impl GenReader for ast::FixVec {
             w!(writer, "    void (*start)();");
             w!(writer, "    void (*chunk)(uint8_t*, mol_num_t);");
             w!(writer, "    void (*end)();");
+            w!(writer, "    void (*size)(mol_num_t);");
             if ! self.item().typ().is_byte() {
-                w!(writer, "    struct {}_callbacks *item;", self.item().typ().get_name());
+                w!(writer, "    void (*index)(mol_num_t);");
+                w!(writer, "    const struct {}_callbacks *item;", self.item().typ().get_name());
             } else {
                 w!(writer, "    void (*body_chunk)(uint8_t*, mol_num_t);");
             }
@@ -191,27 +192,28 @@ impl GenReader for ast::FixVec {
             w!(writer, "    if(s->state_num == 0) {{");
             w!(writer, "        MOL_CALL_NUM(s->length);");
             w!(writer, "        s->state_num++;");
-            w!(writer, "        if(size != -1 && (s->length * {} + 4) != size) return REJECT;", self.item_size());
+            w!(writer, "        if(size != MOL_NUM_MAX && (s->length * {} + 4) != size) return REJECT;", self.item_size());
+            w!(writer, "        if(cb && cb->size) MOL_PIC(cb->size)(s->length * {} + 4);", self.item_size());
             if ! self.item().typ().is_byte() {
                 w!(writer, "        MOL_INIT_SUBPARSER(item, {});", self.item().typ().get_name());
+                w!(writer, "        if(cb && cb->index) MOL_PIC(cb->index)(s->state_num-1);");
             }
             w!(writer, "    }}");
             if self.item().typ().is_byte() {
-                w!(writer, "    if(s->state_num-1 < s->length) {{");
-                w!(writer, "        mol_num_t needed=s->length+1-s->state_num;");
-                w!(writer, "        mol_num_t available=chunk->length-chunk->consumed;");
-                w!(writer, "        mol_num_t copy=needed<available?needed:available;");
-                w!(writer, "        if(cb && cb->body_chunk) cb->body_chunk(chunk->ptr + chunk->consumed, copy);");
-                w!(writer, "        chunk->consumed+=copy;");
-                w!(writer, "        s->state_num+=copy;");
-                w!(writer, "        if(s->state_num-1 < s->length) return INCOMPLETE;");
-                w!(writer, "        DONE();");
-                w!(writer, "    }}");
+                w!(writer, "    mol_num_t needed=s->length+1-s->state_num;");
+                w!(writer, "    mol_num_t available=chunk->length-chunk->consumed;");
+                w!(writer, "    mol_num_t copy=needed<available?needed:available;");
+                w!(writer, "    if(needed && cb && cb->body_chunk) MOL_PIC(cb->body_chunk)(chunk->ptr + chunk->consumed, copy);");
+                w!(writer, "    chunk->consumed+=copy;");
+                w!(writer, "    s->state_num+=copy;");
+                w!(writer, "    if(s->state_num-1 < s->length) return INCOMPLETE;");
+                w!(writer, "    DONE();");
             } else {
                 w!(writer, "    while(s->state_num-1 < s->length) {{");
                 w!(writer, "        MOL_CALL_SUBPARSER(item, {}, {});", self.item().typ().get_name(), self.item_size());
                 w!(writer, "        MOL_INIT_SUBPARSER(item, {});", self.item().typ().get_name());
                 w!(writer, "        s->state_num++;");
+                w!(writer, "        if(cb && cb->index) MOL_PIC(cb->index)(s->state_num-1);");
                 w!(writer, "    }}");
                 w!(writer, "    DONE();");
             }
@@ -236,7 +238,10 @@ impl GenReader for ast::DynVec {
             w!(o, "    void (*start)();");
             w!(o, "    void (*chunk)(uint8_t*, mol_num_t);");
             w!(o, "    void (*end)();");
-            w!(o, "    struct {}_callbacks *item;", self.item().typ().get_name());
+            w!(o, "    void (*size)(mol_num_t);");
+            w!(o, "    void (*index)(mol_num_t);");
+            w!(o, "    void (*offset)(mol_num_t);");
+            w!(o, "    const struct {}_callbacks *item;", self.item().typ().get_name());
             w!(o, "}};");
             w!(o, "");
         }
@@ -249,14 +254,16 @@ impl GenReader for ast::DynVec {
             w!(o, "");
             self.start_parser_function(o);
             w!(o, "    // DynVec");
-            w!(o, "    mol_rv rv;");
+            w!(o, "    (void)(size); // FIXME: check sizes.");
             w!(o, "    switch(s->state_num) {{");
             w!(o, "        case 0:");
             w!(o, "            MOL_CALL_NUM(s->total_size);");
             w!(o, "            MOL_INIT_NUM();");
+            w!(o, "            if(cb && cb->size) MOL_PIC(cb->size)(s->total_size);");
             w!(o, "            if(s->total_size==4) {{");
                                    self.success(o);
             w!(o, "            }}");
+            w!(o, "            if(size != MOL_NUM_MAX && size != s->total_size) return REJECT;");
             w!(o, "            s->state_num++;");
             w!(o, "        case 1:");
             w!(o, "            MOL_CALL_NUM(s->first_offset);");
@@ -275,11 +282,13 @@ impl GenReader for ast::DynVec {
             w!(o, "            MOL_INIT_SUBPARSER(item, {field_type})", field_type=fty);
             w!(o, "            s->field_idx=0;");
             w!(o, "            s->state_num++;");
+            w!(o, "            if(cb && cb->index) MOL_PIC(cb->index)(s->field_idx);");
             w!(o, "        case 3:");
             w!(o, "            while(s->field_idx < (s->first_offset>>2)-1) {{ ");
             w!(o, "                MOL_CALL_SUBPARSER(item, {field_type}, -1)", field_type=fty);
             w!(o, "                MOL_INIT_SUBPARSER(item, {field_type})", field_type=fty);
             w!(o, "                s->field_idx++;");
+            w!(o, "                if(cb && cb->index) MOL_PIC(cb->index)(s->field_idx);");
             w!(o, "            }}");
             w!(o, "    }}");
             self.success(o);
@@ -304,8 +313,9 @@ impl GenReader for ast::Table {
             w!(o, "    void (*start)();");
             w!(o, "    void (*chunk)(uint8_t*, mol_num_t);");
             w!(o, "    void (*end)();");
+            w!(o, "    void (*offsets)(struct {}_state*);", self.name());
             for f in self.fields().iter() {
-                w!(o, "    struct {}_callbacks *{};", f.typ().get_name(), f.name());
+                w!(o, "    const struct {}_callbacks *{};", f.typ().get_name(), f.name());
             }
             w!(o, "}};");
             w!(o, "");
@@ -319,12 +329,11 @@ impl GenReader for ast::Table {
             w!(o, "");
             self.start_parser_function(o);
             w!(o, "    // Table");
-            w!(o, "    mol_rv rv;");
             w!(o, "    switch(s->state_num) {{");
             w!(o, "        case 0:");
             w!(o, "            MOL_CALL_NUM(s->total_size);");
             w!(o, "            MOL_INIT_NUM();");
-            w!(o, "            if(size!=-1 && s->total_size != size) return REJECT;");
+            w!(o, "            if(size!=MOL_NUM_MAX && s->total_size != size) return REJECT;");
             w!(o, "            s->state_num++;");
             w!(o, "        case 1:");
             w!(o, "            switch(s->field_idx) {{");
@@ -339,6 +348,7 @@ impl GenReader for ast::Table {
             w!(o, "            s->state_num++;");
             w!(o, "            s->field_idx=0;");
             w!(o, "            MOL_INIT_SUBPARSER({}, {});", self.fields()[0].name(), self.fields()[0].typ().get_name()); // fails on empty table.
+            w!(o, "            if(cb && cb->offsets) MOL_PIC(cb->offsets)(s);");
             w!(o, "        case 2:");
             w!(o, "            switch(s->field_idx) {{");
             for (i, (f, nf)) in self.fields().iter().zip(self.fields().iter().skip(1)).enumerate() {
