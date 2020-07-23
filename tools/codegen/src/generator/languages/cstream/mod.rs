@@ -94,6 +94,9 @@ impl super::LanguageGenerator for Generator {
         writeln!(writer)?;
         Self::title(writer, "Reader APIs")?;
         for decl in ast.major_decls() {
+            decl.gen_reader_structs(writer)?;
+        }
+        for decl in ast.major_decls() {
             decl.gen_reader_interfaces(writer)?;
         }
         /*writeln!(writer)?;

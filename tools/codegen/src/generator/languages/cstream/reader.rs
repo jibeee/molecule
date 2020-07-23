@@ -6,7 +6,7 @@ use crate::ast;
 pub(super) trait GenReader: IdentPrefix {
     fn gen_reader_interfaces_internal<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
         {
-            w!(writer, "struct {name}_state;", name=self.name());
+            // w!(writer, "struct {name}_state;", name=self.name());
             w!(writer, "struct {name}_callbacks;", name=self.name());
             w!(writer, "typedef const struct {name}_callbacks {name}_cb;", name=self.name());
             self.function_signature(writer, "_init_state", format!("(void* stack_end, struct {name}_state *s, const struct {name}_callbacks *cb)", name=self.name()).as_str(), "void", ";");
@@ -27,10 +27,11 @@ pub(super) trait GenReader: IdentPrefix {
     }
 
     fn gen_reader_function_verify<W: io::Write>(&self, _writer: &mut W) -> io::Result<()>;
+    fn gen_reader_structs<W: io::Write>(&self, _writer: &mut W) -> io::Result<()>;
 }
 
 impl GenReader for ast::Option_ {
-    fn gen_reader_function_verify<W: io::Write>(&self, o: &mut W) -> io::Result<()> {
+    fn gen_reader_structs<W: io::Write>(&self, o: &mut W) -> io::Result<()> {
         {
             w!(o, "struct {}_state {{ }};", self.name());
             w!(o, "struct {}_callbacks {{", self.name());
@@ -42,6 +43,9 @@ impl GenReader for ast::Option_ {
             w!(o, "}};");
             w!(o, "");
         }
+        Ok(())
+    }
+    fn gen_reader_function_verify<W: io::Write>(&self, o: &mut W) -> io::Result<()> {
         {
             self.start_init_function(o);
             w!(o, "    MOL_INIT_SUBPARSER(item, {field_type});", field_type=self.item().typ().get_name());
@@ -66,6 +70,10 @@ impl GenReader for ast::Union {
     fn gen_reader_interfaces_internal<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
         Err(std::io::Error::new(std::io::ErrorKind::Other, "Union is unimplemented"))
     }
+    
+    fn gen_reader_structs<W: io::Write>(&self, o: &mut W) -> io::Result<()> {
+        Err(std::io::Error::new(std::io::ErrorKind::Other, "Union is unimplemented"))
+    }
 
     fn gen_reader_function_verify<W: io::Write>(&self, o: &mut W) -> io::Result<()> {
         Err(std::io::Error::new(std::io::ErrorKind::Other, "Union is unimplemented"))
@@ -73,17 +81,10 @@ impl GenReader for ast::Union {
 }
 
 impl GenReader for ast::Array {
-    fn gen_reader_function_verify<W: io::Write>(&self, o: &mut W) -> io::Result<()> {
+    fn gen_reader_structs<W: io::Write>(&self, o: &mut W) -> io::Result<()> {
         if self.item().typ().is_byte() {
             w!(o, "struct {}_state {{ struct bytes_state state; }};", self.name());
             w!(o, "struct {}_callbacks {{ struct bytes_callbacks cb; }};", self.name());
-            let i_macro_sig_tail = "_init_state(st, g, cbs)";
-            let i_macro_content = "mol_bytes_init_state(&(g->state), &((cbs)->cb))";
-            self.define_reader_macro(o, &i_macro_sig_tail, &i_macro_content)?;
-            let macro_sig_tail = "_parse(st, g, c, cbs, sz)";
-            let macro_content = format!(
-                "mol_parse_bytes(&(g->state), c, &((cbs)->cb), {})", self.item_count());
-            self.define_reader_macro(o, &macro_sig_tail, &macro_content)?;
         } else {
             w!(o, "struct {}_state {{ mol_num_t state_num }};", self.name());
             w!(o, "struct {}_callbacks {{", self.name());
@@ -92,7 +93,19 @@ impl GenReader for ast::Array {
             w!(o, "    void (*end)();");
             w!(o, "    const struct item *{};", self.item().typ().get_name());
             w!(o, "}};");
-            w!(o, "");
+        }
+        Ok(())
+    }
+    fn gen_reader_function_verify<W: io::Write>(&self, o: &mut W) -> io::Result<()> {
+        if self.item().typ().is_byte() {
+            let i_macro_sig_tail = "_init_state(st, g, cbs)";
+            let i_macro_content = "mol_bytes_init_state(&(g->state), &((cbs)->cb))";
+            self.define_reader_macro(o, &i_macro_sig_tail, &i_macro_content)?;
+            let macro_sig_tail = "_parse(st, g, c, cbs, sz)";
+            let macro_content = format!(
+                "mol_parse_bytes(&(g->state), c, &((cbs)->cb), {})", self.item_count());
+            self.define_reader_macro(o, &macro_sig_tail, &macro_content)?;
+        } else {
             self.start_init_function(o);
             w!(o, "        state->state_num=0; ");
             w!(o, "        MOL_INIT_SUBPARSER(item, {field_type});", field_type=self.item().typ().get_name());
@@ -113,7 +126,7 @@ impl GenReader for ast::Array {
 }
 
 impl GenReader for ast::Struct {
-    fn gen_reader_function_verify<W: io::Write>(&self, o: &mut W) -> io::Result<()> {
+    fn gen_reader_structs<W: io::Write>(&self, o: &mut W) -> io::Result<()> {
         {
             w!(o, "struct {}_state {{ mol_num_t state_num; }};", self.name());
             w!(o, "struct {}_callbacks {{", self.name());
@@ -125,7 +138,10 @@ impl GenReader for ast::Struct {
             }
             w!(o, "}};");
             w!(o, "");
+        Ok(())
         }
+    }
+    fn gen_reader_function_verify<W: io::Write>(&self, o: &mut W) -> io::Result<()> {
         {
             self.start_init_function(o);
             w!(o, "    s->state_num=0;");
@@ -167,64 +183,69 @@ impl GenReader for ast::Struct {
 }
 
 impl GenReader for ast::FixVec {
-    fn gen_reader_function_verify<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
+    fn gen_reader_structs<W: io::Write>(&self, o: &mut W) -> io::Result<()> {
         {
-            w!(writer, "struct {}_state {{ mol_num_t state_num; mol_num_t length; }};", self.name());
-            w!(writer, "struct {}_callbacks {{", self.name());
-            w!(writer, "    void (*start)();");
-            w!(writer, "    void (*chunk)(uint8_t*, mol_num_t);");
-            w!(writer, "    void (*end)();");
-            w!(writer, "    void (*size)(mol_num_t);");
+            w!(o, "struct {}_state {{ mol_num_t state_num; mol_num_t length; }};", self.name());
+            w!(o, "struct {}_callbacks {{", self.name());
+            w!(o, "    void (*start)();");
+            w!(o, "    void (*chunk)(uint8_t*, mol_num_t);");
+            w!(o, "    void (*end)();");
+            w!(o, "    void (*size)(mol_num_t);");
             if ! self.item().typ().is_byte() {
-                w!(writer, "    void (*index)(mol_num_t);");
-                w!(writer, "    const struct {}_callbacks *item;", self.item().typ().get_name());
+                w!(o, "    void (*index)(mol_num_t);");
+                w!(o, "    const struct {}_callbacks *item;", self.item().typ().get_name());
             } else {
-                w!(writer, "    void (*body_chunk)(uint8_t*, mol_num_t);");
+                w!(o, "    void (*body_chunk)(uint8_t*, mol_num_t);");
             }
-            w!(writer, "}};");
-            w!(writer, "");
-            self.start_init_function(writer);
-            w!(writer, "    s->state_num=0;");
-            w!(writer, "    MOL_INIT_NUM();");
-            w!(writer, "}}");
+            w!(o, "}};");
+            w!(o, "");
+            self.start_init_function(o);
+            w!(o, "    s->state_num=0;");
+            w!(o, "    MOL_INIT_NUM();");
+            w!(o, "}}");
+    }
+    Ok(())
+}
 
-            self.start_parser_function(writer);
-            w!(writer, "    if(s->state_num == 0) {{");
-            w!(writer, "        MOL_CALL_NUM(s->length);");
-            w!(writer, "        s->state_num++;");
-            w!(writer, "        if(size != MOL_NUM_MAX && (s->length * {} + 4) != size) return REJECT;", self.item_size());
-            w!(writer, "        if(cb && cb->size) MOL_PIC(cb->size)(s->length * {} + 4);", self.item_size());
+    fn gen_reader_function_verify<W: io::Write>(&self, o: &mut W) -> io::Result<()> {
+        {
+            self.start_parser_function(o);
+            w!(o, "    if(s->state_num == 0) {{");
+            w!(o, "        MOL_CALL_NUM(s->length);");
+            w!(o, "        s->state_num++;");
+            w!(o, "        if(size != MOL_NUM_MAX && (s->length * {} + 4) != size) return REJECT;", self.item_size());
+            w!(o, "        if(cb && cb->size) MOL_PIC(cb->size)(s->length * {} + 4);", self.item_size());
             if ! self.item().typ().is_byte() {
-                w!(writer, "        MOL_INIT_SUBPARSER(item, {});", self.item().typ().get_name());
-                w!(writer, "        if(cb && cb->index) MOL_PIC(cb->index)(s->state_num-1);");
+                w!(o, "        MOL_INIT_SUBPARSER(item, {});", self.item().typ().get_name());
+                w!(o, "        if(cb && cb->index) MOL_PIC(cb->index)(s->state_num-1);");
             }
-            w!(writer, "    }}");
+            w!(o, "    }}");
             if self.item().typ().is_byte() {
-                w!(writer, "    mol_num_t needed=s->length+1-s->state_num;");
-                w!(writer, "    mol_num_t available=chunk->length-chunk->consumed;");
-                w!(writer, "    mol_num_t copy=needed<available?needed:available;");
-                w!(writer, "    if(needed && cb && cb->body_chunk) MOL_PIC(cb->body_chunk)(chunk->ptr + chunk->consumed, copy);");
-                w!(writer, "    chunk->consumed+=copy;");
-                w!(writer, "    s->state_num+=copy;");
-                w!(writer, "    if(s->state_num-1 < s->length) return INCOMPLETE;");
-                w!(writer, "    DONE();");
+                w!(o, "    mol_num_t needed=s->length+1-s->state_num;");
+                w!(o, "    mol_num_t available=chunk->length-chunk->consumed;");
+                w!(o, "    mol_num_t copy=needed<available?needed:available;");
+                w!(o, "    if(needed && cb && cb->body_chunk) MOL_PIC(cb->body_chunk)(chunk->ptr + chunk->consumed, copy);");
+                w!(o, "    chunk->consumed+=copy;");
+                w!(o, "    s->state_num+=copy;");
+                w!(o, "    if(s->state_num-1 < s->length) return INCOMPLETE;");
+                w!(o, "    DONE();");
             } else {
-                w!(writer, "    while(s->state_num-1 < s->length) {{");
-                w!(writer, "        MOL_CALL_SUBPARSER(item, {}, {});", self.item().typ().get_name(), self.item_size());
-                w!(writer, "        MOL_INIT_SUBPARSER(item, {});", self.item().typ().get_name());
-                w!(writer, "        s->state_num++;");
-                w!(writer, "        if(cb && cb->index) MOL_PIC(cb->index)(s->state_num-1);");
-                w!(writer, "    }}");
-                w!(writer, "    DONE();");
+                w!(o, "    while(s->state_num-1 < s->length) {{");
+                w!(o, "        MOL_CALL_SUBPARSER(item, {}, {});", self.item().typ().get_name(), self.item_size());
+                w!(o, "        MOL_INIT_SUBPARSER(item, {});", self.item().typ().get_name());
+                w!(o, "        s->state_num++;");
+                w!(o, "        if(cb && cb->index) MOL_PIC(cb->index)(s->state_num-1);");
+                w!(o, "    }}");
+                w!(o, "    DONE();");
             }
-            w!(writer, "}}");
+            w!(o, "}}");
         }
         Ok(())
     }
 }
 
 impl GenReader for ast::DynVec {
-    fn gen_reader_function_verify<W: io::Write>(&self, o: &mut W) -> io::Result<()> {
+    fn gen_reader_structs<W: io::Write>(&self, o: &mut W) -> io::Result<()> {
         // Only supporting DynVec of Table and DynVec of FixVec
         // Start without length validation.
         {
@@ -239,12 +260,16 @@ impl GenReader for ast::DynVec {
             w!(o, "    void (*chunk)(uint8_t*, mol_num_t);");
             w!(o, "    void (*end)();");
             w!(o, "    void (*size)(mol_num_t);");
+            w!(o, "    void (*length)(mol_num_t);");
             w!(o, "    void (*index)(mol_num_t);");
             w!(o, "    void (*offset)(mol_num_t);");
             w!(o, "    const struct {}_callbacks *item;", self.item().typ().get_name());
             w!(o, "}};");
             w!(o, "");
+        Ok(())
         }
+    }
+    fn gen_reader_function_verify<W: io::Write>(&self, o: &mut W) -> io::Result<()> {
         {
             self.start_init_function(o);
             w!(o, "    s->state_num=0;");
@@ -282,6 +307,7 @@ impl GenReader for ast::DynVec {
             w!(o, "            MOL_INIT_SUBPARSER(item, {field_type})", field_type=fty);
             w!(o, "            s->field_idx=0;");
             w!(o, "            s->state_num++;");
+            w!(o, "            if(cb && cb->length) MOL_PIC(cb->length)((s->first_offset>>2)-1);");
             w!(o, "            if(cb && cb->index) MOL_PIC(cb->index)(s->field_idx);");
             w!(o, "        case 3:");
             w!(o, "            while(s->field_idx < (s->first_offset>>2)-1) {{ ");
@@ -299,7 +325,7 @@ impl GenReader for ast::DynVec {
 }
 
 impl GenReader for ast::Table {
-    fn gen_reader_function_verify<W: io::Write>(&self, o: &mut W) -> io::Result<()> {
+    fn gen_reader_structs<W: io::Write>(&self, o: &mut W) -> io::Result<()> {
         {
             w!(o, "struct {}_state {{", self.name());
             w!(o, "    mol_num_t state_num;");
@@ -320,6 +346,9 @@ impl GenReader for ast::Table {
             w!(o, "}};");
             w!(o, "");
         }
+        Ok(())
+    }
+    fn gen_reader_function_verify<W: io::Write>(&self, o: &mut W) -> io::Result<()> {
         {
             self.start_init_function(o);
             w!(o, "    s->state_num=0;");
@@ -403,6 +432,18 @@ impl GenReader for ast::TopDecl {
             ast::TopDecl::FixVec(ref i) => i.gen_reader_function_verify(writer),
             ast::TopDecl::DynVec(ref i) => i.gen_reader_function_verify(writer),
             ast::TopDecl::Table(ref i) => i.gen_reader_function_verify(writer),
+            ast::TopDecl::Primitive(_) => unreachable!(),
+        }
+    }
+    fn gen_reader_structs<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
+        match self {
+            ast::TopDecl::Option_(ref i) => i.gen_reader_structs(writer),
+            ast::TopDecl::Union(ref i) => i.gen_reader_structs(writer),
+            ast::TopDecl::Array(ref i) => i.gen_reader_structs(writer),
+            ast::TopDecl::Struct(ref i) => i.gen_reader_structs(writer),
+            ast::TopDecl::FixVec(ref i) => i.gen_reader_structs(writer),
+            ast::TopDecl::DynVec(ref i) => i.gen_reader_structs(writer),
+            ast::TopDecl::Table(ref i) => i.gen_reader_structs(writer),
             ast::TopDecl::Primitive(_) => unreachable!(),
         }
     }
