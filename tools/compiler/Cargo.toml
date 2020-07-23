@@ -24,6 +24,10 @@ name = "moleculec-c"
 path = "src/compiler-c.rs"
 
 [[bin]]
+name = "moleculec-cstreaming"
+path = "src/compiler-cstreaming.rs"
+
+[[bin]]
 name = "moleculec-rust"
 path = "src/compiler-rust.rs"
 
