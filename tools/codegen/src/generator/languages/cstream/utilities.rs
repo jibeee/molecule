@@ -34,7 +34,7 @@ pub(super) trait IdentPrefix: HasName {
 
     fn define_macro<W: io::Write>(
         &self,
-        is_reader: bool,
+        _is_reader: bool,
         writer: &mut W,
         macro_sig_tail: &str,
         macro_content: &str,
@@ -54,7 +54,7 @@ pub(super) trait IdentPrefix: HasName {
         func_sig_tail: &str,
         func_args: &str,
         func_ret: &str,
-        end: &str
+        end: &str,
     ) -> io::Result<()> {
         let func_name = format!("{}{}", self.reader_prefix(), func_sig_tail);
         writeln!(
@@ -67,35 +67,35 @@ pub(super) trait IdentPrefix: HasName {
             end
         )
     }
-    
-    fn start_parser_function<W: io::Write>(
-        &self,
-        writer: &mut W,
-    ) -> io::Result<()> {
-        self.function_signature(writer, "_parse", format!("(struct {name}_state *s, struct mol_chunk *chunk, const struct {name}_callbacks *cb, mol_num_t size)", name=self.name()).as_str(), "mol_rv", " {");
+
+    fn start_parser_function<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
+        self.function_signature(writer, "_parse", format!("(struct {name}_state *s, struct mol_chunk *chunk, const struct {name}_callbacks *cb, mol_num_t size)", name=self.name()).as_str(), "mol_rv", " {")?;
         w!(writer, "    mol_num_t start_idx = chunk->consumed;");
         Ok(())
     }
-    
-    fn start_init_function<W: io::Write>(
-        &self,
-        writer: &mut W,
-    ) -> io::Result<()> {
-        self.function_signature(writer, "_init_state", format!("(struct {name}_state *s, const struct {name}_callbacks *cb)", name=self.name()).as_str(), "void", " {");
+
+    fn start_init_function<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
+        self.function_signature(
+            writer,
+            "_init_state",
+            format!(
+                "(struct {name}_state *s, const struct {name}_callbacks *cb)",
+                name = self.name()
+            )
+            .as_str(),
+            "void",
+            " {",
+        )?;
         w!(writer, "    if(cb && cb->start) MOL_PIC(cb->start)();");
         Ok(())
     }
 
-    fn success<W: io::Write>(
-        &self,
-        writer: &mut W,
-    ) -> io::Result<()> {
-		w!(writer, "    if(cb && cb->chunk) MOL_PIC(cb->chunk)(chunk->ptr + start_idx, chunk->consumed - start_idx);");
+    fn success<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
+        w!(writer, "    if(cb && cb->chunk) MOL_PIC(cb->chunk)(chunk->ptr + start_idx, chunk->consumed - start_idx);");
         w!(writer, "    if(cb && cb->end) MOL_PIC(cb->end)();");
         w!(writer, "    return COMPLETE;");
         Ok(())
     }
-
 }
 
 impl IdentPrefix for ast::Option_ {}

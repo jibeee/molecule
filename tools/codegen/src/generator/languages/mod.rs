@@ -22,7 +22,7 @@ impl fmt::Display for Language {
         match *self {
             Self::C => write!(f, "C"),
             Self::Rust => write!(f, "Rust"),
-            Self::CStreaming => write!(f,"CStreaming")
+            Self::CStreaming => write!(f, "CStreaming"),
         }
     }
 }
